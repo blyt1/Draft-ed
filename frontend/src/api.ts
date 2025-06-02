@@ -1,4 +1,3 @@
-const API_URL = import.meta.env.VITE_API_URL;
 
 export async function searchBeers(query: string) {
   const res = await fetch(`/beers/search?name=${encodeURIComponent(query)}`);
