@@ -6,9 +6,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/beers': 'http://localhost:8000',
-      '/auth': 'http://localhost:8000',
-      '/user': 'http://localhost:8000',
+      '/beers': 'http://localhost:10000',
+      '/auth': 'http://localhost:10000',
+      '/user': 'http://localhost:10000',
     },
   },
 })
