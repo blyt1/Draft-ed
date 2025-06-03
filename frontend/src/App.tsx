@@ -1,6 +1,4 @@
 import { useState, useEffect } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
 import './App.css'
 import { searchBeers, getList, addBeerToList, updateElo, login, register } from './api'
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom'
