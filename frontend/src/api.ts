@@ -1,4 +1,4 @@
-const API_BASE = '';
+// const API_BASE = '';
 
 export async function searchBeers(query: string, beerType?: string) {
   let url = `/beers/search?q=${encodeURIComponent(query)}`;
