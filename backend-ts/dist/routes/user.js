@@ -51,14 +51,36 @@ router.get('/lists/:list_name', auth_1.authenticate, async (req, res) => {
         if (!list) {
             return res.status(404).json({ detail: 'List not found' });
         }
-        // Get full beer details for each beer in the list
-        const beerIds = list.beers.map((beer) => new mongodb_1.ObjectId(beer.beer_id));
-        let beerQuery = { _id: { $in: beerIds } };
-        // Add beer type filter if provided
-        if (beer_type && typeof beer_type === 'string') {
-            beerQuery.type = beer_type;
+        // Get full beer details for each beer in the list - handle both ID formats
+        const beerIds = [];
+        const stringBeerIds = [];
+        for (const beer of list.beers) {
+            if (mongodb_1.ObjectId.isValid(beer.beer_id.toString())) {
+                beerIds.push(new mongodb_1.ObjectId(beer.beer_id));
+            }
+            else {
+                stringBeerIds.push(beer.beer_id.toString());
+            }
         }
-        const fullBeers = await db.collection('beers').find(beerQuery).toArray();
+        // Query for both ObjectId and string IDs
+        const queries = [];
+        if (beerIds.length > 0) {
+            queries.push({ _id: { $in: beerIds } });
+        }
+        if (stringBeerIds.length > 0) {
+            queries.push({ _id: { $in: stringBeerIds } });
+        }
+        let fullBeers = [];
+        if (queries.length > 0) {
+            const beerQuery = queries.length === 1 ? queries[0] : { $or: queries };
+            // Add beer type filter if provided
+            if (beer_type && typeof beer_type === 'string') {
+                fullBeers = await db.collection('beers').find({ ...beerQuery, type: beer_type }).toArray();
+            }
+            else {
+                fullBeers = await db.collection('beers').find(beerQuery).toArray();
+            }
+        }
         // Combine beer details with user-specific data
         const beersWithDetails = list.beers
             .filter((userBeer) => {
@@ -94,11 +116,14 @@ router.post('/lists/:list_name/beers/:beer_id', auth_1.authenticate, async (req,
     try {
         const { list_name, beer_id } = req.params;
         const db = (0, database_1.getDatabase)();
-        if (!mongodb_1.ObjectId.isValid(beer_id)) {
-            return res.status(400).json({ detail: 'Invalid beer ID' });
+        // Check if beer exists - handle both ObjectId and string IDs
+        let beer;
+        if (mongodb_1.ObjectId.isValid(beer_id)) {
+            beer = await db.collection('beers').findOne({ _id: new mongodb_1.ObjectId(beer_id) });
         }
-        // Check if beer exists
-        const beer = await db.collection('beers').findOne({ _id: new mongodb_1.ObjectId(beer_id) });
+        else {
+            beer = await db.collection('beers').findOne({ _id: beer_id });
+        }
         if (!beer) {
             return res.status(404).json({ detail: 'Beer not found' });
         }
@@ -118,15 +143,18 @@ router.post('/lists/:list_name/beers/:beer_id', auth_1.authenticate, async (req,
             const result = await db.collection('beer_lists').insertOne(newList);
             list = { ...newList, _id: result.insertedId };
         }
-        // Check if beer is already in the list
-        const existingBeer = list.beers.find((b) => b.beer_id.toString() === beer_id);
+        // Check if beer is already in the list - handle both ID formats
+        const existingBeer = list.beers.find((b) => {
+            const listBeerIdStr = b.beer_id.toString();
+            return listBeerIdStr === beer_id || listBeerIdStr === beer._id.toString();
+        });
         if (existingBeer) {
             // Re-ranking: average the old and new Elo scores
             const newEloScore = Math.round((existingBeer.elo_score + 1000) / 2);
             await db.collection('beer_lists').updateOne({
                 user_id: new mongodb_1.ObjectId(req.user._id),
                 name: list_name,
-                'beers.beer_id': new mongodb_1.ObjectId(beer_id)
+                'beers.beer_id': existingBeer.beer_id
             }, {
                 $set: {
                     'beers.$.elo_score': newEloScore,
@@ -136,9 +164,9 @@ router.post('/lists/:list_name/beers/:beer_id', auth_1.authenticate, async (req,
             return res.json({ message: 'Beer re-added with averaged Elo score', elo_score: newEloScore });
         }
         else {
-            // Add new beer to the list
+            // Add new beer to the list - use the beer's actual ID (string or ObjectId)
             const newUserBeer = {
-                beer_id: new mongodb_1.ObjectId(beer_id),
+                beer_id: beer._id,
                 elo_score: 1000,
                 comparisons: 0,
                 created_at: new Date()
@@ -157,8 +185,9 @@ router.post('/compare', auth_1.authenticate, async (req, res) => {
     try {
         const { beer1_id, beer2_id, winner_id, list_name } = req.body;
         const db = (0, database_1.getDatabase)();
-        if (!mongodb_1.ObjectId.isValid(beer1_id) || !mongodb_1.ObjectId.isValid(beer2_id) || !mongodb_1.ObjectId.isValid(winner_id)) {
-            return res.status(400).json({ detail: 'Invalid beer IDs' });
+        // Validate IDs - they can be either ObjectId format or simple strings
+        if (!beer1_id || !beer2_id || !winner_id) {
+            return res.status(400).json({ detail: 'Beer IDs are required' });
         }
         if (winner_id !== beer1_id && winner_id !== beer2_id) {
             return res.status(400).json({ detail: 'Winner must be one of the compared beers' });
@@ -171,18 +200,43 @@ router.post('/compare', auth_1.authenticate, async (req, res) => {
         if (!list) {
             return res.status(404).json({ detail: 'List not found' });
         }
-        // Find both beers in the list
-        const beer1 = list.beers.find((b) => b.beer_id.toString() === beer1_id);
-        const beer2 = list.beers.find((b) => b.beer_id.toString() === beer2_id);
+        // Find both beers in the list - handle both ID formats
+        const beer1 = list.beers.find((b) => {
+            const beerIdStr = b.beer_id.toString();
+            return beerIdStr === beer1_id || beerIdStr === beer1_id.toString();
+        });
+        const beer2 = list.beers.find((b) => {
+            const beerIdStr = b.beer_id.toString();
+            return beerIdStr === beer2_id || beerIdStr === beer2_id.toString();
+        });
         // If beers aren't in the list, add them from the main database
         if (!beer1 || !beer2) {
-            const missingBeerIds = [];
-            if (!beer1)
-                missingBeerIds.push(new mongodb_1.ObjectId(beer1_id));
-            if (!beer2)
-                missingBeerIds.push(new mongodb_1.ObjectId(beer2_id));
-            const beersToAdd = await db.collection('beers').find({ _id: { $in: missingBeerIds } }).toArray();
-            for (const beer of beersToAdd) {
+            const missingBeers = [];
+            // Find missing beers in main collection
+            if (!beer1) {
+                let foundBeer;
+                if (mongodb_1.ObjectId.isValid(beer1_id)) {
+                    foundBeer = await db.collection('beers').findOne({ _id: new mongodb_1.ObjectId(beer1_id) });
+                }
+                else {
+                    foundBeer = await db.collection('beers').findOne({ _id: beer1_id });
+                }
+                if (foundBeer)
+                    missingBeers.push(foundBeer);
+            }
+            if (!beer2) {
+                let foundBeer;
+                if (mongodb_1.ObjectId.isValid(beer2_id)) {
+                    foundBeer = await db.collection('beers').findOne({ _id: new mongodb_1.ObjectId(beer2_id) });
+                }
+                else {
+                    foundBeer = await db.collection('beers').findOne({ _id: beer2_id });
+                }
+                if (foundBeer)
+                    missingBeers.push(foundBeer);
+            }
+            // Add missing beers to list
+            for (const beer of missingBeers) {
                 const newUserBeer = {
                     beer_id: beer._id,
                     elo_score: 1000,
@@ -200,17 +254,23 @@ router.post('/compare', auth_1.authenticate, async (req, res) => {
                 return res.status(500).json({ detail: 'Failed to update list' });
             }
             // Update references
-            const updatedBeer1 = updatedList.beers.find((b) => b.beer_id.toString() === beer1_id) || { elo_score: 1000, comparisons: 0 };
-            const updatedBeer2 = updatedList.beers.find((b) => b.beer_id.toString() === beer2_id) || { elo_score: 1000, comparisons: 0 };
+            const updatedBeer1 = updatedList.beers.find((b) => {
+                const beerIdStr = b.beer_id.toString();
+                return beerIdStr === beer1_id || beerIdStr === beer1_id.toString();
+            }) || { elo_score: 1000, comparisons: 0 };
+            const updatedBeer2 = updatedList.beers.find((b) => {
+                const beerIdStr = b.beer_id.toString();
+                return beerIdStr === beer2_id || beerIdStr === beer2_id.toString();
+            }) || { elo_score: 1000, comparisons: 0 };
             // Calculate new Elo ratings
             const beer1Won = winner_id === beer1_id;
             const newBeer1Elo = calculateEloRating(updatedBeer1.elo_score, updatedBeer2.elo_score, beer1Won);
             const newBeer2Elo = calculateEloRating(updatedBeer2.elo_score, updatedBeer1.elo_score, !beer1Won);
-            // Update both beers
+            // Update both beers - use their actual beer_id from the list
             await db.collection('beer_lists').updateOne({
                 user_id: new mongodb_1.ObjectId(req.user._id),
                 name: list_name,
-                'beers.beer_id': new mongodb_1.ObjectId(beer1_id)
+                'beers.beer_id': updatedBeer1.beer_id
             }, {
                 $set: {
                     'beers.$.elo_score': newBeer1Elo,
@@ -220,7 +280,7 @@ router.post('/compare', auth_1.authenticate, async (req, res) => {
             await db.collection('beer_lists').updateOne({
                 user_id: new mongodb_1.ObjectId(req.user._id),
                 name: list_name,
-                'beers.beer_id': new mongodb_1.ObjectId(beer2_id)
+                'beers.beer_id': updatedBeer2.beer_id
             }, {
                 $set: {
                     'beers.$.elo_score': newBeer2Elo,
@@ -237,11 +297,11 @@ router.post('/compare', auth_1.authenticate, async (req, res) => {
         const beer1Won = winner_id === beer1_id;
         const newBeer1Elo = calculateEloRating(beer1.elo_score, beer2.elo_score, beer1Won);
         const newBeer2Elo = calculateEloRating(beer2.elo_score, beer1.elo_score, !beer1Won);
-        // Update both beers
+        // Update both beers - use their actual beer_id from the list
         await db.collection('beer_lists').updateOne({
             user_id: new mongodb_1.ObjectId(req.user._id),
             name: list_name,
-            'beers.beer_id': new mongodb_1.ObjectId(beer1_id)
+            'beers.beer_id': beer1.beer_id
         }, {
             $set: {
                 'beers.$.elo_score': newBeer1Elo,
@@ -251,7 +311,7 @@ router.post('/compare', auth_1.authenticate, async (req, res) => {
         await db.collection('beer_lists').updateOne({
             user_id: new mongodb_1.ObjectId(req.user._id),
             name: list_name,
-            'beers.beer_id': new mongodb_1.ObjectId(beer2_id)
+            'beers.beer_id': beer2.beer_id
         }, {
             $set: {
                 'beers.$.elo_score': newBeer2Elo,

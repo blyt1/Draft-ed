@@ -51,11 +51,16 @@ router.get('/search', async (req, res) => {
 router.get('/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        if (!mongodb_1.ObjectId.isValid(id)) {
-            return res.status(400).json({ detail: 'Invalid beer ID' });
-        }
         const db = (0, database_1.getDatabase)();
-        const beer = await db.collection('beers').findOne({ _id: new mongodb_1.ObjectId(id) });
+        let beer;
+        // Try to find beer by ObjectId first (for new beers)
+        if (mongodb_1.ObjectId.isValid(id)) {
+            beer = await db.collection('beers').findOne({ _id: new mongodb_1.ObjectId(id) });
+        }
+        // If not found and ID is not ObjectId, try finding by string ID (for legacy beers)
+        if (!beer) {
+            beer = await db.collection('beers').findOne({ _id: id });
+        }
         if (!beer) {
             return res.status(404).json({ detail: 'Beer not found' });
         }

@@ -62,7 +62,12 @@ router.post('/login', async (req, res) => {
         const user = await db.collection('users').findOne({
             $or: [{ username }, { email: username }]
         });
-        if (!user || !(0, jwt_1.verifyPassword)(password, user.hashed_password)) {
+        if (!user) {
+            return res.status(401).json({ detail: 'Incorrect username or password' });
+        }
+        // Handle both password field names for backward compatibility with Python backend
+        const storedPasswordHash = user.hashed_password || user.password_hash;
+        if (!storedPasswordHash || !(0, jwt_1.verifyPassword)(password, storedPasswordHash)) {
             return res.status(401).json({ detail: 'Incorrect username or password' });
         }
         const accessToken = (0, jwt_1.createAccessToken)({ sub: user._id.toString() });

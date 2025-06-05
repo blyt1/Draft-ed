@@ -1,4 +1,7 @@
-// const API_BASE = '';
+// const BASE_URL = process.env.NODE_ENV === 'production' 
+//   ? 'https://your-backend-app.railway.app'  // or render.com, heroku.com
+//   : 'http://localhost:8000';
+
 
 export async function searchBeers(query: string, beerType?: string) {
   let url = `/beers/search?q=${encodeURIComponent(query)}`;
